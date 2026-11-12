@@ -1,0 +1,11 @@
+{
+  "appId": "com.roomview.app",
+  "appName": "RoomView",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

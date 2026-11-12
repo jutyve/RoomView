@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#101318">
+  <title>RoomView</title>
+</head>
+<body>
+  <main id="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">R</span><span>RoomView</span></div>
+      <div class="top-actions">
+        <button id="uploadToggle" class="button subtle">Open panorama</button>
+        <button id="fullscreenButton" class="icon-button" title="Fullscreen">⛶</button>
+      </div>
+    </header>
+
+    <section id="viewer" aria-label="Room panorama viewer">
+      <div id="canvasHost"></div>
+      <div id="welcome" class="welcome">
+        <div class="welcome-card">
+          <div class="eyebrow">360° ROOM VIEWER</div>
+          <h1>Step inside.</h1>
+          <p>Open a 360° panorama stored on your phone, then look around using touch or motion controls.</p>
+          <button id="startUpload" class="button primary">Open a panorama</button>
+          <p class="small-note">Choose an equirectangular 360° image, ideally with a 2:1 aspect ratio.</p>
+        </div>
+      </div>
+      <div class="viewer-hint" id="viewerHint">Drag to look around · Pinch or scroll to zoom</div>
+      <div class="status" id="status">No panorama loaded</div>
+      <div class="controls">
+        <button id="gyroButton" class="control-button">Enable motion</button>
+        <button id="vrButton" class="control-button">VR view</button>
+        <button id="resetButton" class="control-button" title="Reset view">Reset</button>
+      </div>
+    </section>
+
+    <aside id="uploadPanel" class="panel hidden">
+      <div class="panel-header">
+        <div>
+          <div class="eyebrow">YOUR ROOMS</div>
+          <h2>Open a panorama</h2>
+        </div>
+        <button id="closeUpload" class="icon-button" aria-label="Close">×</button>
+      </div>
+      <p class="panel-copy">Select an existing 360° panorama from your phone. It will be saved inside RoomView so you can open it again offline.</p>
+      <label class="button primary full file-button" for="panoramaInput">Choose panorama image</label>
+      <input id="panoramaInput" type="file" accept="image/*" hidden>
+      <div class="separator"><span>SAVED ON THIS PHONE</span></div>
+      <div id="savedPanoramas" class="saved-list">No saved panoramas yet.</div>
+      <div class="separator"><span>ABOUT PHOTO STITCHING</span></div>
+      <p class="small-note">This APK currently opens and stores finished panoramas. Combining ordinary photos into a 360° panorama still needs the original Python/OpenCV stitching backend; that backend is not included in this offline Android build.</p>
+      <div id="uploadMessage" class="message"></div>
+    </aside>
+
+    <div id="permissionNotice" class="permission-notice hidden">
+      Motion could not start. Check that your phone supports motion sensors and try again.
+    </div>
+  </main>
+  <script type="module" src="/src/app.js"></script>
+</body>
+</html>
