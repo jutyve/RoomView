@@ -11,6 +11,7 @@ const uploadMessage = document.getElementById("uploadMessage");
 const gyroButton = document.getElementById("gyroButton");
 const vrButton = document.getElementById("vrButton");
 const permissionNotice = document.getElementById("permissionNotice");
+const viewerHint = document.getElementById("viewerHint");
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1100);
@@ -36,9 +37,19 @@ let targetPitch = 0;
 let zoom = 75;
 let gyroEnabled = false;
 let stereoEnabled = false;
-let deviceYawOffset = null;
-let devicePitchOffset = null;
+let lastDeviceYaw = null;
+let lastDevicePitch = null;
+let lastDeviceTimestamp = null;
 let activePointers = new Map();
+
+// Use yaw only to choose left/right; panorama panning stays at a steady speed.
+const GYRO_PAN_SPEED = THREE.MathUtils.degToRad(40);
+const GYRO_TURN_DEAD_ZONE = THREE.MathUtils.degToRad(5);
+const GYRO_RATE_SMOOTHING_SECONDS = 0.06;
+const GYRO_PITCH_SENSITIVITY = 0.25;
+const MAX_GYRO_PITCH_SPEED = THREE.MathUtils.degToRad(45);
+const GYRO_PITCH_DEAD_ZONE = THREE.MathUtils.degToRad(0.06);
+let filteredDeviceYawRate = 0;
 let lastX = 0;
 let lastY = 0;
 let pinchDistance = 0;
@@ -126,6 +137,16 @@ resize();
 
 function setStatus(message) {
   statusEl.textContent = message;
+}
+
+function updateViewerHint() {
+  if (gyroEnabled) {
+    viewerHint.textContent = "Turn phone left or right to pan steadily · Tilt to look up or down";
+  } else if (stereoEnabled) {
+    viewerHint.textContent = "Place phone in a compatible viewer · Drag to look around";
+  } else {
+    viewerHint.textContent = "Drag to look around · Pinch to zoom";
+  }
 }
 
 function showMessage(message, error = false) {
@@ -259,7 +280,7 @@ function renderStereo(width, height) {
 
 function animate() {
   requestAnimationFrame(animate);
-  yaw += (targetYaw - yaw) * 0.12;
+  yaw = normalizeAngle(yaw + normalizeAngle(targetYaw - yaw) * 0.12);
   pitch += (targetPitch - pitch) * 0.12;
   updateCamera();
   const width = canvasHost.clientWidth;
@@ -281,8 +302,6 @@ document.getElementById("resetButton").addEventListener("click", () => {
   targetYaw = 0;
   targetPitch = 0;
   zoom = 75;
-  deviceYawOffset = null;
-  devicePitchOffset = null;
   camera.fov = zoom;
   camera.updateProjectionMatrix();
 });
@@ -303,7 +322,7 @@ function normalizeAngle(value) {
 }
 
 function handleDeviceOrientation(event) {
-  if (!gyroEnabled || event.alpha === null || event.beta === null || event.gamma === null) return;
+  if (!gyroEnabled || event.alpha == null || event.beta == null || event.gamma == null) return;
   const alpha = THREE.MathUtils.degToRad(event.alpha);
   const beta = THREE.MathUtils.degToRad(event.beta);
   const gamma = THREE.MathUtils.degToRad(event.gamma);
@@ -315,12 +334,58 @@ function handleDeviceOrientation(event) {
   const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
   const nextYaw = Math.atan2(-direction.x, -direction.z);
   const nextPitch = Math.asin(Math.max(-1, Math.min(1, direction.y)));
-  if (deviceYawOffset === null) {
-    deviceYawOffset = yaw - nextYaw;
-    devicePitchOffset = pitch - nextPitch;
+  const timestamp = Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now();
+
+  // The first sample only establishes a reference, so enabling motion never jumps the view.
+  if (lastDeviceYaw === null || lastDevicePitch === null || lastDeviceTimestamp === null) {
+    lastDeviceYaw = nextYaw;
+    lastDevicePitch = nextPitch;
+    lastDeviceTimestamp = timestamp;
+    return;
   }
-  targetYaw = normalizeAngle(nextYaw + deviceYawOffset);
-  targetPitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, nextPitch + devicePitchOffset));
+
+  const rawElapsed = (timestamp - lastDeviceTimestamp) / 1000;
+  const yawDelta = normalizeAngle(nextYaw - lastDeviceYaw);
+  const pitchDelta = nextPitch - lastDevicePitch;
+  lastDeviceYaw = nextYaw;
+  lastDevicePitch = nextPitch;
+  lastDeviceTimestamp = timestamp;
+  if (!Number.isFinite(rawElapsed) || rawElapsed <= 0 || rawElapsed > 0.5) {
+    filteredDeviceYawRate = 0;
+    return;
+  }
+
+  const elapsed = THREE.MathUtils.clamp(rawElapsed, 1 / 120, 0.1);
+  const measuredYawRate = yawDelta / elapsed;
+  const smoothing = 1 - Math.exp(-elapsed / GYRO_RATE_SMOOTHING_SECONDS);
+  filteredDeviceYawRate += (measuredYawRate - filteredDeviceYawRate) * smoothing;
+
+  // A right/left turn selects direction; the panorama then pans at a steady rate.
+  if (Math.abs(filteredDeviceYawRate) > GYRO_TURN_DEAD_ZONE) {
+    targetYaw = normalizeAngle(
+      targetYaw + Math.sign(filteredDeviceYawRate) * GYRO_PAN_SPEED * elapsed
+    );
+  }
+
+  const filteredPitchDelta = Math.abs(pitchDelta) < GYRO_PITCH_DEAD_ZONE ? 0 : pitchDelta;
+  const maxPitchStep = MAX_GYRO_PITCH_SPEED * elapsed;
+  const pitchStep = THREE.MathUtils.clamp(
+    filteredPitchDelta * GYRO_PITCH_SENSITIVITY,
+    -maxPitchStep,
+    maxPitchStep
+  );
+  targetPitch = THREE.MathUtils.clamp(
+    targetPitch + pitchStep,
+    -Math.PI / 2 + 0.01,
+    Math.PI / 2 - 0.01
+  );
+}
+
+function resetDeviceMotionReference() {
+  lastDeviceYaw = null;
+  lastDevicePitch = null;
+  lastDeviceTimestamp = null;
+  filteredDeviceYawRate = 0;
 }
 
 async function enableGyroscope() {
@@ -332,13 +397,13 @@ async function enableGyroscope() {
       const permission = await DeviceOrientationEvent.requestPermission();
       if (permission !== "granted") throw new Error("Motion permission was not granted.");
     }
-    deviceYawOffset = null;
-    devicePitchOffset = null;
+    resetDeviceMotionReference();
     gyroEnabled = true;
     window.addEventListener("deviceorientation", handleDeviceOrientation, true);
     gyroButton.classList.add("active");
     gyroButton.textContent = "Motion enabled";
     permissionNotice.classList.add("hidden");
+    updateViewerHint();
   } catch (error) {
     permissionNotice.textContent = error.message || "Could not enable motion controls.";
     permissionNotice.classList.remove("hidden");
@@ -348,10 +413,10 @@ async function enableGyroscope() {
 function disableGyroscope() {
   gyroEnabled = false;
   window.removeEventListener("deviceorientation", handleDeviceOrientation, true);
+  resetDeviceMotionReference();
   gyroButton.classList.remove("active");
   gyroButton.textContent = "Enable motion";
-  deviceYawOffset = null;
-  devicePitchOffset = null;
+  updateViewerHint();
 }
 
 gyroButton.addEventListener("click", () => {
@@ -363,9 +428,7 @@ vrButton.addEventListener("click", () => {
   stereoEnabled = !stereoEnabled;
   vrButton.classList.toggle("active", stereoEnabled);
   vrButton.textContent = stereoEnabled ? "Exit VR view" : "VR view";
-  document.getElementById("viewerHint").textContent = stereoEnabled
-    ? "Place phone in a compatible viewer · Motion controls enabled"
-    : "Drag to look around · Pinch to zoom";
+  updateViewerHint();
   resize();
 });
 
